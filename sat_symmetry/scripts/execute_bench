@@ -1,0 +1,83 @@
+#!/bin/bash
+set -u
+
+function check_exist_or_die {
+    [ -e "$1" ] || { echo "file not exist: $1"; exit 1; }
+}
+
+if [[ $# -lt 3 ]]
+then
+    echo "Usage: $0 PROBLEMS_DIR TIMEOUT SOLVER [SOLVER_OPTIONS]" >&2
+    exit 1
+fi
+
+
+PROBLEMS_DIR="$1"; shift
+TIMEOUT="$1";      shift
+SOLVER="$1";       shift
+OPTIONS="$@"
+
+PARALLEL_TASK=8
+
+check_exist_or_die "$PROBLEMS_DIR"
+check_exist_or_die "$SOLVER"
+
+
+find "$PROBLEMS_DIR" -iname "*.cnf" -type f -print0 | \
+    xargs -0 -L1 -I {} --max-procs=${PARALLEL_TASK} sh -c \
+          "./scripts/execute_solver \"$SOLVER\" \"{}\" $TIMEOUT \"$OPTIONS\""
+
+# Analyse runs
+# outputs are in results directory
+RESULTS="results/"
+
+NB=0
+NB_TIMEOUT=0
+NB_MEMOUT=0
+NB_SAT=0
+NB_SATWS=0
+NB_UNSAT=0
+NB_UNKNOWN=0
+
+SUM=0
+PAR2=0
+export LC_NUMERIC=C
+
+for file in $RESULTS/*.var
+do
+    NB=$((NB+1))
+    source $file
+    case $RESULT in
+        "TIMEOUT") NB_TIMEOUT=$((NB_TIMEOUT+1));;
+        "MEMOUT") NB_MEMOUT=$((NB_MEMOUT+1));;
+        "SATISFIABLE") NB_SAT=$((NB_SAT+1));;
+        "WRONG_SOLUTION") NB_SATWS=$((NB_SATWS+1));;
+        "UNSATISFIABLE") NB_UNSAT=$((NB_UNSAT+1));;
+        "UNKNOWN") NB_UNKNOWN=$((NB_UNKNOWN+1));;
+    esac
+    SUM=$(echo $SUM + $WCTIME | bc)
+    PAR2=$(echo $PAR2 + $WCTIME | bc)
+    [ $TIMEOUT == "true" ] && PAR2=$(echo $PAR2 + $WCTIME | bc)
+done
+
+echo ""
+printf "\e[0;32m[----------]\e[m Global test environement tear down.\n"
+printf "\e[0;32m[==========]\e[m Executed $NB instances.\n"
+[ $NB_SATWS -eq 0 ] && printf "\e[0;32m[  PASSED  ]\e[m\n"
+[ $NB_SATWS -gt 0 ] && printf "\e[0;31m[    KO    ]\e[m\n"
+
+echo ""
+printf "\e[0;32m[  SUM UP  ]\e[m\n"
+echo "--------------------------------------------------------------------"
+printf "%-20s: %d\n" "SAT" $NB_SAT
+printf "%-20s: %d\n" "UNSAT" $NB_UNSAT
+printf "%-20s: %d\n" "TOTAL" $(($NB_UNSAT+$NB_SAT))
+printf "%-20s: %d\n" "TIMEOUT" $NB_TIMEOUT
+printf "%-20s: %d\n" "UNKNOWN" $NB_UNKNOWN
+printf "%-20s: %d\n" "SAT WS" $NB_SATWS
+echo "--------------------------------------------------------------------"
+printf "%-20s: %.2f seconds\n" "Total time" $SUM
+printf "%-20s: %.2f seconds\n" "Par 2 total time" $PAR2
+
+
+exit $NB_SATWS

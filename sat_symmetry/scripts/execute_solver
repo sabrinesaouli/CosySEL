@@ -1,0 +1,100 @@
+#!/bin/bash
+set -u
+
+if [[ $# -lt 3 ]]
+then
+    echo "Usage: $0 SOLVER CNF TIMEOUT SOLVER_OPTIONS" >&2
+    exit 1
+fi
+
+# Some tools
+RUNNER="third_party/runsolver"
+VERIFIER="third_party/SAT"
+
+# Possible Answer
+TIMEOUT_STR="[  TIMEOUT ]"
+MEMOUT_STR="[   MEMOUT ]"
+SAT_STR="[      SAT ]"
+SATWS_STR="[   SAT WS ]"
+UNSAT_STR="[    UNSAT ]"
+UNKNOWN_STR="[  UNKNOWN ]"
+
+# Function  utils
+function check_exist_or_die {
+    [ -e "$1" ] || { echo "file not exist: $1"; exit 1; }
+}
+
+function verify_sat() {
+    CNF="$1"
+    OUT_FILE="$2"
+
+    CHECK=$("$VERIFIER" "$CNF" "$OUT_FILE" | tail -n1)
+    if [[ $CHECK -eq 11 ]]; then
+        echo "$SAT_STR"
+    else
+        echo "$SATWS_STR"
+    fi
+}
+
+# Parameters
+SOLVER="$1";  shift
+CNF="$1";     shift
+TIMEOUT="$1"; shift
+OPTIONS="$@"
+
+
+# Some check
+check_exist_or_die "$RUNNER"
+check_exist_or_die "$SOLVER"
+check_exist_or_die "$CNF"
+check_exist_or_die "$VERIFIER"
+
+# Run Solver
+CNF_FILE=$(basename "$CNF")
+SOLVER_FILE=$(basename "$SOLVER")
+
+RESULTS="results"
+mkdir -p $RESULTS
+
+BASE="$RESULTS/$SOLVER_FILE-$CNF_FILE"
+VAR_FILE="$BASE.var"
+OUT_FILE="$BASE.out"
+
+CMD="\"$SOLVER\" \"$CNF\" $OPTIONS"
+
+
+ID="$SOLVER_FILE $CNF_FILE"
+
+printf '\e[0;32m%-6s\e[m %s\n' '[ RUN      ]' "$ID"
+$RUNNER -w /dev/null -v "$VAR_FILE" -W $TIMEOUT -o "$OUT_FILE" sh -c "$CMD"
+
+# Analyse solver output
+source $VAR_FILE
+export LC_NUMERIC=C
+ANSWER=""
+
+# Check error case
+[[ -z $ANSWER && $TIMEOUT == "true" ]] && ANSWER=$TIMEOUT_STR
+[[ -z $ANSWER && $MEMOUT == "true" ]] && ANSWER=$MEMOUT_STR
+
+if [[ -z $ANSWER ]]; then
+    ANSWER=$(grep -o -R "^s [A-Z]*$" "$OUT_FILE" | cut -d' ' -f2)
+    [[ $ANSWER == "UNSATISFIABLE" ]] && ANSWER=$UNSAT_STR
+    [[ $ANSWER == "SATISFIABLE" ]] && ANSWER=$(verify_sat $CNF $OUT_FILE)
+    [[ -z $ANSWER ]] && ANSWER=$UNKNOWN_STR
+fi
+
+# Color Answer
+COLOR=""
+
+case $ANSWER in
+    "$TIMEOUT_STR") COLOR="\e[0;33m"; RESULT="TIMEOUT";;
+    "$MEMOUT_STR") COLOR="\e[0;33m"; RESULT="MEMOUT";;
+    "$SAT_STR") COLOR="\e[0;32m"; RESULT="SATISFIABLE";;
+    "$SATWS_STR") COLOR="\e[0;31m"; RESULT="WRONG_SOLUTION";;
+    "$UNSAT_STR") COLOR="\e[0;32m"; RESULT="UNSATISFIABLE";;
+    "$UNKNOWN_STR") COLOR="\e[0;36m" RESULT="UNKNOWN";;
+esac
+
+printf "$COLOR%-6s\e[m %s (%.2f s)\n"  "$ANSWER" "$ID" $WCTIME
+echo -e "#Result by solver\nRESULT=$RESULT" >> $VAR_FILE

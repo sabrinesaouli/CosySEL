@@ -1,0 +1,4 @@
+#!/bin/bash
+
+wget https://lip6.fr/Hakan.Metin/fully_sym.zip
+unzip fully_sym.zip
